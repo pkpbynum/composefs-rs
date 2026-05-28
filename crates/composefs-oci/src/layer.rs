@@ -48,12 +48,16 @@ where
         MediaType::ImageLayer | MediaType::ImageLayerNonDistributable => {
             Box::new(BufReader::with_capacity(IO_BUF_CAPACITY, buf))
         }
-        MediaType::ImageLayerGzip | MediaType::ImageLayerNonDistributableGzip => Box::new(
-            BufReader::with_capacity(IO_BUF_CAPACITY, GzipDecoder::new(buf)),
-        ),
-        MediaType::ImageLayerZstd | MediaType::ImageLayerNonDistributableZstd => Box::new(
-            BufReader::with_capacity(IO_BUF_CAPACITY, ZstdDecoder::new(buf)),
-        ),
+        MediaType::ImageLayerGzip | MediaType::ImageLayerNonDistributableGzip => {
+            let mut decoder = GzipDecoder::new(buf);
+            decoder.multiple_members(true);
+            Box::new(BufReader::with_capacity(IO_BUF_CAPACITY, decoder))
+        }
+        MediaType::ImageLayerZstd | MediaType::ImageLayerNonDistributableZstd => {
+            let mut decoder = ZstdDecoder::new(buf);
+            decoder.multiple_members(true);
+            Box::new(BufReader::with_capacity(IO_BUF_CAPACITY, decoder))
+        }
         _ => bail!("Unsupported layer media type for decompression: {media_type}"),
     };
     Ok(reader)
