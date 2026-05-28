@@ -1,4 +1,3 @@
-/Cargo.lock
 /target/
 /vendor/
 # Fuzz sub-workspaces have their own target directories
