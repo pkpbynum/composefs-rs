@@ -34,6 +34,20 @@
             ];
           };
           cargoLock.lockFile = ./Cargo.lock;
+          checkFlags = [
+            # These require fsverity kernel support, unavailable in the sandbox
+            "--skip=fsverity::ioctl::tests::test_measure_verity_opt"
+            "--skip=fsverity::tests::crosscheck_interesting_cases"
+            "--skip=fsverity::tests::test_enable_verity_maybe_copy_with_copy"
+            "--skip=fsverity::tests::test_enable_verity_maybe_copy_without_copy"
+            "--skip=fsverity::tests::test_verity_forking"
+            "--skip=fsverity::tests::test_verity_missing"
+            "--skip=fsverity::tests::test_verity_simple"
+            "--skip=fsverity::tests::test_verity_wrongdigest_sha256_sha512"
+            "--skip=fsverity::tests::test_verity_wrongdigest_sha512_sha256"
+            # Requires mkcomposefs to be installed
+            "--skip=erofs::reader::tests::test_pr188_empty_inline_directory"
+          ];
         };
       });
 
