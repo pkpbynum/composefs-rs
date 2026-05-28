@@ -65,7 +65,7 @@ pub fn process_entry<ObjectID: FsVerityHashValue>(
 
     let (dir, filename) = filesystem
         .root
-        .split_mut(entry.path.as_os_str())
+        .split_mut_mkdir(entry.path.as_os_str())
         .with_context(|| {
             format!(
                 "Error unpacking container layer file {:?} {:?}",

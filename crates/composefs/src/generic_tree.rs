@@ -348,6 +348,72 @@ impl<T> Directory<T> {
         Ok((dir, filename))
     }
 
+    /// Like `get_directory_mut`, but implicitly creates missing intermediate directories
+    /// with default permissions (0755, uid 0, gid 0).
+    ///
+    /// This matches the behavior of Docker and containerd when applying OCI layers:
+    /// tar archives are not required to include explicit directory entries for all
+    /// parent paths.
+    pub fn get_or_create_directory_mut(
+        &mut self,
+        pathname: &OsStr,
+    ) -> Result<&mut Directory<T>, ImageError> {
+        let path = Path::new(pathname);
+        let mut dir = self;
+
+        for component in path.components() {
+            dir = match component {
+                Component::RootDir => dir,
+                Component::Prefix(..) | Component::CurDir | Component::ParentDir => {
+                    return Err(ImageError::InvalidFilename(pathname.into()));
+                }
+                Component::Normal(filename) => {
+                    if !dir.entries.contains_key(filename) {
+                        let implicit_stat = Stat {
+                            st_mode: 0o755,
+                            st_uid: 0,
+                            st_gid: 0,
+                            st_mtim_sec: 0,
+                            xattrs: BTreeMap::new(),
+                        };
+                        dir.entries.insert(
+                            Box::from(filename),
+                            Inode::Directory(Box::new(Directory::new(implicit_stat))),
+                        );
+                    }
+                    match dir.entries.get_mut(filename) {
+                        Some(Inode::Directory(subdir)) => subdir,
+                        Some(_) => return Err(ImageError::NotADirectory(filename.into())),
+                        None => unreachable!(),
+                    }
+                }
+            };
+        }
+
+        Ok(dir)
+    }
+
+    /// Like `split_mut`, but implicitly creates missing parent directories.
+    ///
+    /// See `get_or_create_directory_mut` for details.
+    pub fn split_mut_mkdir<'d, 'n>(
+        &'d mut self,
+        pathname: &'n OsStr,
+    ) -> Result<(&'d mut Directory<T>, &'n OsStr), ImageError> {
+        let path = Path::new(pathname);
+
+        let Some(filename) = path.file_name() else {
+            return Err(ImageError::InvalidFilename(Box::from(pathname)));
+        };
+
+        let dir = match path.parent() {
+            Some(parent) => self.get_or_create_directory_mut(parent.as_os_str())?,
+            None => self,
+        };
+
+        Ok((dir, filename))
+    }
+
     /// Returns the `LeafId` for the named non-directory entry.
     ///
     /// This is typically used to create hardlinks: directory entries sharing
