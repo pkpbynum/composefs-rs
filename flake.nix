@@ -3,7 +3,7 @@
   outputs =
     { self, nixpkgs, ... }:
     let
-      cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+      cargoToml = fromTOML (builtins.readFile ./Cargo.toml);
       inherit (nixpkgs.legacyPackages.x86_64-linux.lib) fileset;
       forAllSystems =
         fn:
@@ -14,8 +14,22 @@
         ] (system: fn nixpkgs.legacyPackages.${system});
     in
     {
+      legacyPackages = forAllSystems (pkgs: pkgs);
       packages = forAllSystems (pkgs: {
         default = self.packages.${pkgs.stdenv.hostPlatform.system}.composefs;
+        cfs-oci-example =
+          let
+            cfsctl = self.packages.${pkgs.stdenv.hostPlatform.system}.composefs;
+            container = pkgs.ociTools.buildContainer {
+              args = [ "${pkgs.coreutils}/bin/true" ];
+            };
+          in
+          pkgs.runCommand "cfs-oci-example" {
+            nativeBuildInputs = [ cfsctl ];
+          } ''
+            cfsctl --repo $out init --insecure
+            cfsctl --repo $out create-image --no-propagate-usr-to-root ${container}/rootfs
+          '';
         composefs = pkgs.rustPlatform.buildRustPackage {
           pname = "composefs";
           inherit (cargoToml.workspace.package) version;
@@ -35,16 +49,8 @@
           };
           cargoLock.lockFile = ./Cargo.lock;
           checkFlags = [
-            # These require fsverity kernel support, unavailable in the sandbox
-            "--skip=fsverity::ioctl::tests::test_measure_verity_opt"
-            "--skip=fsverity::tests::crosscheck_interesting_cases"
-            "--skip=fsverity::tests::test_enable_verity_maybe_copy_with_copy"
-            "--skip=fsverity::tests::test_enable_verity_maybe_copy_without_copy"
-            "--skip=fsverity::tests::test_verity_forking"
-            "--skip=fsverity::tests::test_verity_missing"
-            "--skip=fsverity::tests::test_verity_simple"
-            "--skip=fsverity::tests::test_verity_wrongdigest_sha256_sha512"
-            "--skip=fsverity::tests::test_verity_wrongdigest_sha512_sha256"
+            # Requires fsverity kernel support, unavailable in the sandbox
+            "--skip=fsverity"
             # Requires mkcomposefs to be installed
             "--skip=erofs::reader::tests::test_pr188_empty_inline_directory"
           ];
@@ -58,8 +64,55 @@
           packages = with pkgs; [
             rust-analyzer
             clippy
+            just
           ];
         };
       });
+
+      checks = forAllSystems (
+        pkgs:
+        {
+          vm-cfsctl = pkgs.testers.runNixOSTest {
+            name = "cfsctl-mount";
+            nodes.machine =
+              { pkgs, ... }:
+              let
+                cfsctl = self.packages.${pkgs.stdenv.hostPlatform.system}.composefs;
+                container = pkgs.ociTools.buildContainer {
+                  args = [ "${pkgs.coreutils}/bin/true" ];
+                };
+              in
+              {
+                virtualisation.memorySize = 2048;
+                environment.systemPackages = [ cfsctl ];
+                systemd.tmpfiles.rules = [
+                  "C /var/lib/test-rootfs - - - - ${container}/rootfs"
+                ];
+              };
+            testScript = ''
+              machine.wait_for_unit("multi-user.target")
+
+              # Initialize a composefs repository
+              machine.succeed("cfsctl --repo /tmp/repo init --insecure")
+
+              # Create a composefs image from the OCI rootfs
+              result = machine.succeed(
+                  "cfsctl --repo /tmp/repo create-image --no-propagate-usr-to-root /var/lib/test-rootfs"
+              )
+              image_id = result.strip().split(":")[-1]
+
+              # Mount the image
+              machine.succeed("mkdir -p /mnt/composefs")
+              machine.succeed(
+                  f"cfsctl --repo /tmp/repo mount {image_id} /mnt/composefs"
+              )
+
+              # Verify that the nix store path for coreutils is accessible
+              machine.succeed("test -d /mnt/composefs/nix/store")
+              machine.succeed("find /mnt/composefs -name true -executable | grep -q true")
+            '';
+          };
+        }
+      );
     };
 }
