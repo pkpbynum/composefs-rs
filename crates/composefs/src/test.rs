@@ -15,6 +15,9 @@ static TMPDIR: Lazy<OsString> = Lazy::new(|| {
     if let Some(path) = std::env::var_os("CFS_TEST_TMPDIR") {
         eprintln!("temporary directory from $CFS_TEST_TMPDIR: {path:?}");
         path
+    } else if let Some(path) = std::env::var_os("TMPDIR") {
+        eprintln!("temporary directory from $TMPDIR: {path:?}");
+        path
     } else {
         // We can't use /tmp because that's usually a tmpfs (no fsverity)
         // We also can't use /var/tmp because it's an overlayfs in toolbox (no fsverity)
