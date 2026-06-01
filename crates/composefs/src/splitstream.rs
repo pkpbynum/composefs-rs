@@ -745,6 +745,31 @@ impl<ObjectID: FsVerityHashValue> SplitStreamWriter<ObjectID> {
 
         eprintln!("[SplitStreamWriter::done] final buf size={}, object_refs={}, stream_size(compressed from encoder)={}", buf.len(), self.object_refs.items.len(), stream.len());
 
+        // Debug: verify stream can be decompressed and count instructions
+        {
+            use std::io::Read;
+            let mut decoder = zstd::Decoder::new(std::io::Cursor::new(&stream)).unwrap();
+            let mut decompressed = Vec::new();
+            decoder.read_to_end(&mut decompressed).unwrap();
+            let mut pos = 0;
+            let mut inline_count = 0u64;
+            let mut external_count = 0u64;
+            let mut inline_bytes_total = 0u64;
+            while pos + 8 <= decompressed.len() {
+                let val = i64::from_le_bytes(decompressed[pos..pos+8].try_into().unwrap());
+                pos += 8;
+                if val < 0 {
+                    inline_count += 1;
+                    let size = val.unsigned_abs() as usize;
+                    inline_bytes_total += size as u64;
+                    pos += size;
+                } else {
+                    external_count += 1;
+                }
+            }
+            eprintln!("[SplitStreamWriter::done] verify: decompressed={}, instructions: {inline_count} inline ({inline_bytes_total} bytes) + {external_count} external, remaining={}", decompressed.len(), decompressed.len() - pos);
+        }
+
         // Store the Vec<u8> into the repository (writable already checked)
         self.repo.ensure_object_impl(&buf, &self.writable)
     }
