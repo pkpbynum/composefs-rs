@@ -4,12 +4,15 @@
 //! into a composefs repository, shared between the skopeo proxy path and
 //! direct OCI layout import.
 
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::task::{Context, Poll};
 
 use anyhow::{Result, bail};
 use async_compression::tokio::bufread::{GzipDecoder, ZstdDecoder};
 use containers_image_proxy::oci_spec::image::MediaType;
-use tokio::io::{AsyncRead, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWriteExt, BufReader, ReadBuf};
 
 use composefs::fsverity::FsVerityHashValue;
 use composefs::repository::{ObjectStoreMethod, Repository};
@@ -17,6 +20,34 @@ use composefs::shared_internals::IO_BUF_CAPACITY;
 
 use crate::skopeo::TAR_LAYER_CONTENT_TYPE;
 use crate::tar::split_async;
+
+/// Debug wrapper that counts bytes passing through a reader.
+struct ByteCountingReader<R> {
+    inner: R,
+    count: Arc<AtomicU64>,
+    label: &'static str,
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for ByteCountingReader<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let result = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if let Poll::Ready(Ok(())) = &result {
+            let n = buf.filled().len() - before;
+            if n == 0 {
+                let total = self.count.load(Ordering::Relaxed);
+                eprintln!("[ByteCountingReader:{}] EOF after {} bytes total", self.label, total);
+            } else {
+                self.count.fetch_add(n as u64, Ordering::Relaxed);
+            }
+        }
+        result
+    }
+}
 
 /// Check if a media type represents a tar-based layer.
 pub fn is_tar_media_type(media_type: &MediaType) -> bool {
@@ -43,7 +74,12 @@ pub fn decompress_async<'a, R>(
 where
     R: AsyncRead + Unpin + Send + 'a,
 {
-    let buf = BufReader::new(reader);
+    let counted_input = ByteCountingReader {
+        inner: reader,
+        count: Arc::new(AtomicU64::new(0)),
+        label: "compressed-input",
+    };
+    let buf = BufReader::new(counted_input);
     let reader: Box<dyn AsyncRead + Unpin + Send> = match media_type {
         MediaType::ImageLayer | MediaType::ImageLayerNonDistributable => {
             Box::new(BufReader::with_capacity(IO_BUF_CAPACITY, buf))
@@ -75,7 +111,12 @@ where
     ObjectID: FsVerityHashValue,
     R: AsyncRead + Unpin + Send,
 {
-    split_async(reader, repo, TAR_LAYER_CONTENT_TYPE).await
+    let counted = ByteCountingReader {
+        inner: reader,
+        count: Arc::new(AtomicU64::new(0)),
+        label: "decompressed",
+    };
+    split_async(counted, repo, TAR_LAYER_CONTENT_TYPE).await
 }
 
 /// Store raw bytes from an async reader as a repository object.

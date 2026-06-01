@@ -175,6 +175,8 @@ pub async fn split_async<ObjectID: FsVerityHashValue>(
     let mut parser = Parser::with_defaults();
     let mut buf = BytesMut::with_capacity(IO_BUF_CAPACITY);
     let mut need = HEADER_SIZE;
+    let mut total_bytes_read: u64 = 0;
+    let mut entry_count: u64 = 0;
 
     loop {
         // Ensure we have enough data for the parser
@@ -184,11 +186,14 @@ pub async fn split_async<ObjectID: FsVerityHashValue>(
             if n == 0 {
                 if buf.is_empty() {
                     // Clean EOF at header boundary
+                    eprintln!("[split_async] EOF at header boundary after {total_bytes_read} bytes, {entry_count} entries processed");
                     let (object_id, ss_stats) = builder.finish().await?;
                     return Ok((object_id, ImportStats::from_split_stream_stats(&ss_stats)));
                 }
+                eprintln!("[split_async] unexpected EOF after {total_bytes_read} bytes, {entry_count} entries, buf has {} bytes remaining", buf.len());
                 bail!("unexpected EOF in tar stream");
             }
+            total_bytes_read += n as u64;
         }
 
         match parser.parse(&buf)? {
@@ -202,6 +207,7 @@ pub async fn split_async<ObjectID: FsVerityHashValue>(
                 continue;
             }
             ParseEvent::End { consumed } => {
+                eprintln!("[split_async] ParseEvent::End after {total_bytes_read} bytes, {entry_count} entries, consumed={consumed}");
                 builder.push_inline(&buf.split_to(consumed));
                 // GNU tar pads archives to a "record size" (typically 20×512 = 10240 bytes).
                 // After the two end-of-archive zero blocks (consumed above), there may be
@@ -215,20 +221,24 @@ pub async fn split_async<ObjectID: FsVerityHashValue>(
                 if !buf.is_empty() {
                     builder.push_inline(&buf.split());
                 }
+                let mut drain_bytes: u64 = 0;
                 loop {
                     buf.reserve(IO_BUF_CAPACITY);
                     let n = tar_stream.read_buf(&mut buf).await?;
                     if n == 0 {
                         break;
                     }
+                    drain_bytes += n as u64;
                     builder.push_inline(&buf.split());
                 }
+                eprintln!("[split_async] drain after End read {drain_bytes} additional bytes");
                 break;
             }
             ParseEvent::SparseEntry { .. } => {
                 bail!("sparse tar entries are not supported");
             }
             ParseEvent::Entry { consumed, entry } => {
+                entry_count += 1;
                 // Extract what we need before mutating buf
                 let actual_size = entry.size as usize;
                 let is_large_file =
