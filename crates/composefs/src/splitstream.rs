@@ -403,23 +403,31 @@ impl<ObjectID: FsVerityHashValue> SplitStreamBuilder<ObjectID> {
             external_objects: Vec::new(),
         };
 
+        let num_entries = self.entries.len();
+        eprintln!("[SplitStreamBuilder::finish] entries={num_entries}, inline_bytes={}", self.total_inline_bytes);
+
         // First pass: await all handles to collect ObjectIDs
         // We need to preserve the order of entries, so we process them in sequence
         let mut resolved_entries: Vec<ResolvedEntry<ObjectID>> =
             Vec::with_capacity(self.entries.len());
 
+        let mut inline_count = 0u64;
+        let mut external_count = 0u64;
         for entry in self.entries {
             match entry {
                 SplitStreamEntry::Inline(data) => {
+                    inline_count += 1;
                     resolved_entries.push(ResolvedEntry::Inline(data));
                 }
                 SplitStreamEntry::External { handle, size } => {
+                    external_count += 1;
                     let (id, method) = handle.await??;
                     stats.external_objects.push((size, method));
                     resolved_entries.push(ResolvedEntry::External { id, size });
                 }
             }
         }
+        eprintln!("[SplitStreamBuilder::finish] resolved: {inline_count} inline, {external_count} external");
 
         // Second pass: build the splitstream using SplitStreamWriter
         // This gives us proper deduplication through UniqueVec
@@ -734,6 +742,8 @@ impl<ObjectID: FsVerityHashValue> SplitStreamWriter<ObjectID> {
         } else {
             buf
         };
+
+        eprintln!("[SplitStreamWriter::done] final buf size={}, object_refs={}, stream_size(uncompressed from encoder)={}", buf.len(), self.object_refs.len(), stream.len());
 
         // Store the Vec<u8> into the repository (writable already checked)
         self.repo.ensure_object_impl(&buf, &self.writable)
