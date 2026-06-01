@@ -403,7 +403,7 @@ pub fn get_entry<ObjectID: FsVerityHashValue>(
                 ParseEvent::Entry { entry, .. } => {
                     let size = entry.size;
                     let stored_size = size.next_multiple_of(512);
-                    eprintln!("[get_entry #{entry_num}] size={size}, stored_size={stored_size}, type={:?}, inline_bytes_remaining={}", entry.entry_type, reader.inline_bytes);
+                    eprintln!("[get_entry #{entry_num}] size={size}, stored_size={stored_size}, type={:?}", entry.entry_type);
 
                     let item = match reader.read_exact(size as usize, stored_size as usize)? {
                         SplitStreamData::External(id) => match entry.entry_type {
