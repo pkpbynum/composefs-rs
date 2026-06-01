@@ -872,9 +872,12 @@ impl<ObjectID: FsVerityHashValue> SplitStreamReader<ObjectID> {
         let named_refs = Self::read_named_references(&named_refs_bytes, stream_refs)
             .map_err(|e| Error::msg(format!("Error reading splitstream mappings: {e:?}")))?;
 
-        file.seek(SeekFrom::Start(info.stream.start.get()))
+        let stream_start = info.stream.start.get();
+        let stream_len = info.stream.len()?;
+        eprintln!("[SplitStreamReader::new] object_refs={}, stream_start={stream_start}, stream_len={stream_len}, total_size={total_size}", object_refs.len());
+        file.seek(SeekFrom::Start(stream_start))
             .context("Unable to seek to start of splitstream content")?;
-        let decoder = Decoder::new(file.take(info.stream.len()?))
+        let decoder = Decoder::new(file.take(stream_len))
             .context("Unable to decode zstd-compressed content in splitstream")?;
 
         Ok(Self {
@@ -948,6 +951,9 @@ impl<ObjectID: FsVerityHashValue> SplitStreamReader<ObjectID> {
             let mut value = I64::ZERO;
 
             if !read_exactish(&mut self.decoder, value.as_mut_bytes())? {
+                if !eof_ok {
+                    eprintln!("[SplitStreamReader::ensure_chunk] Unexpected EOF! inline_bytes={}, expected_bytes={expected_bytes}, object_refs_count={}", self.inline_bytes, self.object_refs.len());
+                }
                 ensure!(eof_ok, "Unexpected EOF in splitstream");
                 return Ok(ChunkType::Eof);
             }
