@@ -370,6 +370,9 @@ fn make_absolute_path(tar_path: &[u8]) -> PathBuf {
 pub fn get_entry<ObjectID: FsVerityHashValue>(
     reader: &mut SplitStreamReader<ObjectID>,
 ) -> Result<Option<TarEntry<ObjectID>>> {
+    static GET_ENTRY_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let entry_num = GET_ENTRY_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     let mut parser = Parser::with_defaults();
     let mut header_buf: Vec<u8> = Vec::new();
     let mut block = [0u8; 512];
@@ -400,6 +403,7 @@ pub fn get_entry<ObjectID: FsVerityHashValue>(
                 ParseEvent::Entry { entry, .. } => {
                     let size = entry.size;
                     let stored_size = size.next_multiple_of(512);
+                    eprintln!("[get_entry #{entry_num}] size={size}, stored_size={stored_size}, type={:?}, inline_bytes_remaining={}", entry.entry_type, reader.inline_bytes);
 
                     let item = match reader.read_exact(size as usize, stored_size as usize)? {
                         SplitStreamData::External(id) => match entry.entry_type {
