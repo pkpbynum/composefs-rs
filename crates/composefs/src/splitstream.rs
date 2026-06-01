@@ -1040,6 +1040,15 @@ impl<ObjectID: FsVerityHashValue> SplitStreamReader<ObjectID> {
         actual_size: usize,
         stored_size: usize,
     ) -> Result<SplitStreamData<ObjectID>> {
+        // A zero-size entry (e.g. an empty file or a directory) has no content or
+        // padding instruction in the splitstream, so there is nothing to read. We
+        // must short-circuit here: calling ensure_chunk() would try to consume the
+        // next instruction, which either misinterprets the following entry or — for
+        // a final zero-size entry in a tar with no end-of-archive marker — fails
+        // with a spurious "Unexpected EOF in splitstream".
+        if stored_size == 0 {
+            return Ok(SplitStreamData::Inline(Box::new([])));
+        }
         if let ChunkType::External(id) = self.ensure_chunk(false, true, stored_size)? {
             // ...and the padding
             if actual_size < stored_size {
