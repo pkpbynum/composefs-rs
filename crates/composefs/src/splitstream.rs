@@ -743,7 +743,7 @@ impl<ObjectID: FsVerityHashValue> SplitStreamWriter<ObjectID> {
             buf
         };
 
-        eprintln!("[SplitStreamWriter::done] final buf size={}, object_refs={}, stream_size(uncompressed from encoder)={}", buf.len(), self.object_refs.len(), stream.len());
+        eprintln!("[SplitStreamWriter::done] final buf size={}, object_refs={}, stream_size(compressed from encoder)={}", buf.len(), self.object_refs.items.len(), stream.len());
 
         // Store the Vec<u8> into the repository (writable already checked)
         self.repo.ensure_object_impl(&buf, &self.writable)
